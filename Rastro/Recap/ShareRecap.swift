@@ -29,7 +29,10 @@ struct RecapCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("RASTRO").font(.caption.bold()).kerning(3).opacity(0.8)
-            Text(stats.title).font(.system(size: 40, weight: .heavy))
+            Text(stats.title)
+                .font(.system(size: 40, weight: .heavy))
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
 
             HStack(spacing: 24) {
                 big("\(stats.uniquePlaces)", "places")

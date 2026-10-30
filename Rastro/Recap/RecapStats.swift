@@ -2,10 +2,23 @@ import Foundation
 import CoreLocation
 
 enum RecapPeriod: String, CaseIterable, Identifiable {
+    case day = "Day"
+    case week = "Week"
     case month = "Month"
     case year = "Year"
-    case allTime = "All time"
+    case allTime = "All"
     var id: String { rawValue }
+
+    /// The calendar unit used to step back/forward through periods (nil = all time).
+    var calendarComponent: Calendar.Component? {
+        switch self {
+        case .day: .day
+        case .week: .weekOfYear
+        case .month: .month
+        case .year: .year
+        case .allTime: nil
+        }
+    }
 }
 
 /// All the numbers shown on the recap screen, computed from raw data.
@@ -37,6 +50,29 @@ struct RecapStats {
         let fmt = DateFormatter()
 
         switch period {
+        case .day:
+            interval = cal.dateInterval(of: .day, for: anchor)
+            if cal.isDateInToday(anchor) {
+                title = "Today"
+            } else if cal.isDateInYesterday(anchor) {
+                title = "Yesterday"
+            } else {
+                fmt.dateFormat = "EEE, MMM d, yyyy"
+                title = fmt.string(from: anchor)
+            }
+        case .week:
+            interval = cal.dateInterval(of: .weekOfYear, for: anchor)
+            if let w = interval {
+                // end is exclusive (next week's start), so show the last day of this week
+                let lastDay = w.end.addingTimeInterval(-1)
+                fmt.dateFormat = "MMM d"
+                let start = fmt.string(from: w.start)
+                let sameMonth = cal.isDate(w.start, equalTo: lastDay, toGranularity: .month)
+                fmt.dateFormat = sameMonth ? "d, yyyy" : "MMM d, yyyy"
+                title = "\(start) – \(fmt.string(from: lastDay))"
+            } else {
+                title = "This week"
+            }
         case .month:
             interval = cal.dateInterval(of: .month, for: anchor)
             fmt.dateFormat = "LLLL yyyy"

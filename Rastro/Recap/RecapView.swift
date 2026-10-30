@@ -24,6 +24,8 @@ struct RecapView: View {
                         ForEach(RecapPeriod.allCases) { Text($0.rawValue).tag($0) }
                     }
                     .pickerStyle(.segmented)
+                    // Jump back to the current day/week/month/year when switching tabs
+                    .onChange(of: period) { _, _ in anchor = .now }
 
                     periodStepper(title: stats.title)
 
@@ -70,7 +72,10 @@ struct RecapView: View {
             HStack {
                 Button { shift(-1) } label: { Image(systemName: "chevron.left") }
                 Spacer()
-                Text(title).font(.title2.bold())
+                Text(title)
+                    .font(.title2.bold())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                 Spacer()
                 Button { shift(1) } label: { Image(systemName: "chevron.right") }
                     .disabled(isCurrentPeriod)
@@ -80,12 +85,12 @@ struct RecapView: View {
     }
 
     private var isCurrentPeriod: Bool {
-        let comp: Calendar.Component = period == .month ? .month : .year
+        guard let comp = period.calendarComponent else { return true }
         return Calendar.current.isDate(anchor, equalTo: .now, toGranularity: comp)
     }
 
     private func shift(_ delta: Int) {
-        let comp: Calendar.Component = period == .month ? .month : .year
+        guard let comp = period.calendarComponent else { return }
         anchor = Calendar.current.date(byAdding: comp, value: delta, to: anchor) ?? anchor
     }
 

@@ -1,0 +1,45 @@
+name: Rastro
+options:
+  bundleIdPrefix: com.diablolabs        # <-- change to your own reverse domain
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    TARGETED_DEVICE_FAMILY: "1"
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: ""              # <-- paste your Apple Team ID here (or pick it in Xcode)
+
+targets:
+  Rastro:
+    type: application
+    platform: iOS
+    sources:
+      - path: Rastro
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.diablolabs.rastro   # <-- must match App Store Connect
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        INFOPLIST_FILE: Rastro/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        SUPPORTS_MACCATALYST: NO
+    info:
+      path: Rastro/Info.plist
+      properties:
+        CFBundleDisplayName: Rastro
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSRequiresIPhoneOS: true
+        ITSAppUsesNonExemptEncryption: false
+        UILaunchScreen: {}
+        UIApplicationSupportsIndirectInputEvents: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UIBackgroundModes:
+          - location
+        NSLocationWhenInUseUsageDescription: "Rastro uses your location to record the places you visit so it can build your personal monthly and yearly recaps."
+        NSLocationAlwaysAndWhenInUseUsageDescription: "Allow 'Always' so Rastro can quietly log the places you visit in the background, even when the app is closed. Your history stays on your device."

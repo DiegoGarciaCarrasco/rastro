@@ -1,0 +1,5 @@
+Rastro.xcodeproj/
+.DS_Store
+build/
+DerivedData/
+xcuserdata/

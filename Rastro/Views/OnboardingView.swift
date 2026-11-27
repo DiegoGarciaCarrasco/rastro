@@ -1,4 +1,23 @@
+//
+//  OnboardingView.swift
+//  Rastro
+//
+//  PERMISSION SCREENS
+//
+//   • `OnboardingView`         — full-screen welcome shown until the user grants location
+//                                access. Has two states: "Start tracking" (can still ask)
+//                                and "Open Settings" (user denied; iOS won't ask again).
+//   • `AlwaysPermissionBanner` — small orange banner at the top of the Recap tab while the
+//                                user only granted "While Using" (no background logging).
+//
+//  Permission logic itself lives in Location/LocationTracker.swift → `requestPermission()`.
+//  NOTE (App Store review): Apple checks that the wording here and the Info.plist usage
+//  strings honestly explain why "Always" location is needed. Keep them accurate.
+//
+
 import SwiftUI
+
+// MARK: - OnboardingView
 
 struct OnboardingView: View {
     @EnvironmentObject private var tracker: LocationTracker
@@ -6,6 +25,8 @@ struct OnboardingView: View {
     var body: some View {
         VStack(spacing: 28) {
             Spacer()
+
+            // Logo + pitch
             Image(systemName: "point.topleft.down.to.point.bottomright.curvepath.fill")
                 .font(.system(size: 72))
                 .foregroundStyle(.orange)
@@ -16,6 +37,7 @@ struct OnboardingView: View {
                 .foregroundStyle(.secondary)
                 .padding(.horizontal)
 
+            // Three selling points (privacy, battery, control)
             VStack(alignment: .leading, spacing: 14) {
                 Label("Data stays on your iPhone", systemImage: "lock.fill")
                 Label("Low battery: no constant GPS", systemImage: "battery.75percent")
@@ -25,18 +47,23 @@ struct OnboardingView: View {
 
             Spacer()
 
+            // Call to action — depends on the current permission state
             if tracker.authorizationStatus == .denied || tracker.authorizationStatus == .restricted {
+                // Denied: the app can't show the system prompt again; only the Settings app can fix it.
                 Text("Location access is off. Turn it on in Settings → Rastro → Location → Always.")
                     .font(.footnote)
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
                 Button("Open Settings") {
+                    // Deep-links straight to Rastro's page in the iOS Settings app.
                     if let url = URL(string: UIApplication.openSettingsURLString) {
                         UIApplication.shared.open(url)
                     }
                 }
                 .buttonStyle(.borderedProminent)
             } else {
+                // Not asked yet: shows the system "Allow While Using" prompt.
+                // Once granted, RootView swaps this screen for the tabs automatically.
                 Button {
                     tracker.requestPermission()
                 } label: {
@@ -50,7 +77,10 @@ struct OnboardingView: View {
     }
 }
 
+// MARK: - AlwaysPermissionBanner
+
 /// Small banner shown when the user only gave "While Using" permission.
+/// Renders nothing once "Always" is granted.
 struct AlwaysPermissionBanner: View {
     @EnvironmentObject private var tracker: LocationTracker
 
@@ -63,9 +93,13 @@ struct AlwaysPermissionBanner: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                 Button("Allow Always") {
+                    // Try the in-app "Change to Always Allow" prompt first…
                     if tracker.authorizationStatus == .authorizedWhenInUse {
                         tracker.requestPermission()
                     }
+                    // …and also open Settings as a fallback.
+                    // NOTE: both happen on the same tap, so the prompt and the Settings app
+                    // can compete; consider opening Settings only if the prompt was already used.
                     // If iOS already showed the prompt once, it won't again — send them to Settings.
                     if let url = URL(string: UIApplication.openSettingsURLString) {
                         UIApplication.shared.open(url)
@@ -79,3 +113,24 @@ struct AlwaysPermissionBanner: View {
         }
     }
 }
+
+// MARK: - Previews (Xcode canvas only — open with ⌥⌘↩)
+
+#if DEBUG
+#Preview("Onboarding") {
+    OnboardingView()
+        .environmentObject(LocationTracker.shared)
+}
+
+#Preview("Onboarding · dark mode") {
+    OnboardingView()
+        .environmentObject(LocationTracker.shared)
+        .preferredColorScheme(.dark)
+}
+
+#Preview("Always-permission banner") {
+    AlwaysPermissionBanner()
+        .environmentObject(LocationTracker.shared)
+        .padding()
+}
+#endif

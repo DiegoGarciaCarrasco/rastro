@@ -20,6 +20,10 @@ targets:
     platform: iOS
     sources:
       - path: Rastro
+    # ⌘U in Xcode runs these tests (the Rastro scheme includes the test target).
+    scheme:
+      testTargets:
+        - RastroTests
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.diablolabs.rastro   # <-- must match App Store Connect
@@ -43,3 +47,17 @@ targets:
           - location
         NSLocationWhenInUseUsageDescription: "Rastro uses your location to record the places you visit so it can build your personal monthly and yearly recaps."
         NSLocationAlwaysAndWhenInUseUsageDescription: "Allow 'Always' so Rastro can quietly log the places you visit in the background, even when the app is closed. Your history stays on your device."
+
+  # Unit tests (Swift Testing). Runs inside the app (TEST_HOST) so it can use
+  # `@testable import Rastro`. Files live in RastroTests/.
+  RastroTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: RastroTests
+    dependencies:
+      - target: Rastro
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.diablolabs.rastro.tests
+        GENERATE_INFOPLIST_FILE: YES

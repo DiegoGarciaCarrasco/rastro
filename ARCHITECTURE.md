@@ -9,7 +9,8 @@ this page shows how the pieces fit together and the order to read them in.
 |---|------|-------------------|
 | 1 | `Rastro/RastroApp.swift` | Launch, database creation, why the tracker starts in `init()` |
 | 2 | `Rastro/Models/Models.swift` | The only two things stored: `Visit` and `LocationPoint` |
-| 3 | `Rastro/Location/LocationTracker.swift` | **The core.** Permissions, iOS location events → database rows, geocoding |
+| 3 | `Rastro/Location/LocationTracker.swift` | **The core.** Permissions, iOS location events → database rows, geocoding queue |
+| 3b | `Rastro/Location/VisitRecorder.swift` | The rules for turning messy iOS visit events into correct visits (dedupe, late departures, stale visits) |
 | 4 | `Rastro/Views/RootView.swift` | Onboarding vs. tabs; what happens when the app opens |
 | 5 | `Rastro/Views/OnboardingView.swift` | Permission screens and the "Allow Always" banner |
 | 6 | `Rastro/Recap/RecapStats.swift` | All the recap math (pure functions, easy to test) |
@@ -64,10 +65,12 @@ up (the `.xcodeproj` is generated from `project.yml` and isn't in git).
 ### You arrive at a café (app closed)
 1. iOS detects the visit and relaunches Rastro in the background. `RastroApp.init()` runs and
    no window is shown.
-2. `locationManager(_:didVisit:)` → `save(visit:)` inserts an **open** `Visit` (no departure).
-3. `geocode(_:)` fills in "Café X, Madrid, Spain".
-4. When you leave, iOS sends the same visit again with a departure date. `save(visit:)` finds
-   the open visit within 200 m and closes it.
+2. `locationManager(_:didVisit:)` → `save(visit:)` → `VisitRecorder.record` inserts an **open**
+   `Visit` (no departure) and closes any older visit still marked open.
+3. The new visit joins the geocoding queue; `geocode(_:)` fills in "Café X, Madrid, Spain".
+4. When you leave, iOS sends the same visit again with a departure date. `VisitRecorder` finds
+   it by its arrival time (±5 min, within 200 m) and closes it, even if it was already
+   closed as stale.
 
 ### You open the Recap tab
 1. `@Query` loads every visit and point.
@@ -108,15 +111,14 @@ These are also marked with `NOTE:` comments in the code.
 - **Performance**: `RecapView` filters *all* data in memory on every redraw, and the share image
   is re-rendered on every redraw. Use date-ranged queries, and render the image when the
   share button is tapped.
-- **Geocoding**: places with no city are retried every time the app opens, and two retry
-  loops can run at the same time. The build shows a concurrency warning in `geocode(_:)`
-  (a non-`Sendable` `Visit` captured in a closure). Consider MapKit's newer
-  reverse-geocoding API.
+- **Geocoding**: now a single queue (fixed in `fix/visit-recording-bugs`). Still to consider:
+  MapKit's newer reverse-geocoding API, and backing off when Apple rate-limits.
 - **Place grouping**: `placeKey` changes once a visit is geocoded, and nearby visits can fall
   into different ~110 m grid cells. Distance-based clustering would group places better.
 - **"Allow Always" banner** opens the permission prompt and the Settings app on the same tap.
 - **Settings** loads every row just to count them (`fetchCount` would be cheaper).
 - **Localization**: all user-facing text is hard-coded English. A String Catalog would allow
   Spanish and other languages.
-- **Tests**: there are none yet. `RecapStats.make` is the best place to start (pure input → output).
+- **Tests**: `RastroTests/` covers `VisitRecorder` and the core of `RecapStats` (run with ⌘U).
+  Still missing: UI tests, and tests for week/month titles and period edges.
 - `daysTracked` is calculated but not shown anywhere yet.

@@ -19,10 +19,11 @@
 //     `nonisolated func locationManager(...)`   ← bottom of this file
 //        │  hops to the main thread with `Task { @MainActor in ... }`
 //        ▼
-//     `save(visit:)` / `save(points:)`  → SwiftData mainContext → views refresh via @Query
+//     `save(visit:)` → VisitRecorder (merge rules)  ┐
+//     `save(points:)`                              ┴→ SwiftData mainContext → views refresh via @Query
 //        │
 //        ▼
-//     `geocode(_:)` (async, Apple's servers) → fills name/city/country → save again
+//     geocoding queue → `geocode(_:)` (async, Apple's servers) → fills name/city/country → save again
 //
 //  Why a singleton (`shared`)? There must be exactly one CLLocationManager listening, and
 //  it has to exist even when no UI is on screen (background relaunch). RastroApp creates
@@ -149,43 +150,14 @@ final class LocationTracker: NSObject, ObservableObject {
 
     // MARK: - Saving events to the database
 
-    /// Converts an iOS `CLVisit` into a `Visit` row (or closes an existing open one).
+    /// Converts an iOS `CLVisit` into a `Visit` row (or updates an existing one).
+    /// All the merge / dedupe / stale-visit rules live in `VisitRecorder` (tested in
+    /// RastroTests); here we only translate the event and queue a name lookup.
     private func save(visit clVisit: CLVisit) {
         guard let context = container?.mainContext else { return }
-
-        // iOS uses sentinel dates for "unknown": distantPast = arrival unknown,
-        // distantFuture = still there (no departure yet). Translate them to our model.
-        let arrival = clVisit.arrivalDate == .distantPast ? Date.now : clVisit.arrivalDate
-        let departure: Date? = clVisit.departureDate == .distantFuture ? nil : clVisit.departureDate
-        let coord = clVisit.coordinate
-
-        // Step 1 — Is this the "departure" half of a visit we already saved?
-        // iOS reports a visit twice: on arrival (no departure yet) and on departure.
-        // If we already have the open visit, just close it.
-        let open = FetchDescriptor<Visit>(predicate: #Predicate { $0.departure == nil })
-        if let existing = (try? context.fetch(open))?.first(where: {
-            // "Same visit" = an open visit within 200 m of this event.
-            CLLocation(latitude: $0.latitude, longitude: $0.longitude)
-                .distance(from: CLLocation(latitude: coord.latitude, longitude: coord.longitude)) < 200
-        }) {
-            existing.departure = departure
-            try? context.save()
-            return
+        if let newVisit = VisitRecorder.record(VisitEvent(clVisit), in: context) {
+            enqueueGeocoding([newVisit.persistentModelID])
         }
-
-        // Step 2 — It's a new place. Any visit still marked open must be stale
-        // (e.g. iOS never sent its departure), so close it at this new arrival time.
-        // Close any other dangling open visit (we clearly left it).
-        if let dangling = try? context.fetch(open) {
-            for v in dangling { v.departure = v.departure ?? arrival }
-        }
-
-        // Step 3 — Insert the new visit and look up its name in the background.
-        let visit = Visit(arrival: arrival, departure: departure,
-                          latitude: coord.latitude, longitude: coord.longitude)
-        context.insert(visit)
-        try? context.save()
-        geocode(visit)
     }
 
     /// Saves movement breadcrumbs. iOS may batch several locations into one callback.
@@ -204,43 +176,66 @@ final class LocationTracker: NSObject, ObservableObject {
 
     // MARK: - Reverse geocoding (coordinates → place names)
 
-    /// Turns coordinates into "Café X, Walnut Creek, United States".
-    ///
-    /// Uses Apple's geocoding servers (needs internet; Apple rate-limits it). The completion
-    /// handler runs off the main thread, so we hop back to the main actor before touching
-    /// the Visit / database.
-    private func geocode(_ visit: Visit) {
-        let location = CLLocation(latitude: visit.latitude, longitude: visit.longitude)
-        geocoder.reverseGeocodeLocation(location) { [weak self] placemarks, _ in
-            guard let pm = placemarks?.first else { return }   // offline / no result → retry later
-            Task { @MainActor in
-                // Prefer a point of interest ("Retiro Park") over a street address.
-                visit.name = pm.areasOfInterest?.first ?? pm.name
-                visit.locality = pm.locality
-                visit.adminArea = pm.administrativeArea
-                visit.country = pm.country
-                try? self?.container?.mainContext.save()
-            }
+    // How it works: visits to name go into ONE queue, and ONE worker task drains it,
+    // one request at a time with a pause between them. CLGeocoder handles one request
+    // at a time and Apple rate-limits it, so overlapping requests would just fail.
+    // The queue holds database IDs, not Visit objects, so a visit deleted while it
+    // waits is simply skipped.
+
+    private var geocodeQueue: [PersistentIdentifier] = []   // waiting to be named
+    private var geocodeWorker: Task<Void, Never>?            // nil = no worker running
+
+    /// Adds visits to the naming queue (skipping ones already queued) and starts the
+    /// worker if it isn't running. Safe to call any number of times.
+    private func enqueueGeocoding(_ ids: [PersistentIdentifier]) {
+        for id in ids where !geocodeQueue.contains(id) {
+            geocodeQueue.append(id)
         }
+        guard geocodeWorker == nil else { return }   // the running worker will get to them
+        geocodeWorker = Task {
+            while !geocodeQueue.isEmpty {
+                let id = geocodeQueue.removeFirst()
+                await geocode(id)
+                try? await Task.sleep(for: .seconds(1.5))   // stay under Apple's rate limit
+            }
+            geocodeWorker = nil
+        }
+    }
+
+    /// Turns coordinates into "Café X, Walnut Creek, United States" for one visit.
+    ///
+    /// Uses Apple's geocoding servers (needs internet). The lookup takes time, and the user
+    /// may delete the visit meanwhile, so we re-fetch it by ID AFTER the lookup and only
+    /// write if it still exists.
+    private func geocode(_ id: PersistentIdentifier) async {
+        guard let context = container?.mainContext,
+              let visit = VisitRecorder.liveVisit(id, in: context) else { return }
+        let location = CLLocation(latitude: visit.latitude, longitude: visit.longitude)
+
+        // Offline / rate-limited / no result → leave it unnamed; geocodeMissing() retries later.
+        guard let pm = try? await geocoder.reverseGeocodeLocation(location).first else { return }
+
+        guard let stillThere = VisitRecorder.liveVisit(id, in: context) else { return }   // deleted while waiting
+        // Prefer a point of interest ("Retiro Park") over a street address.
+        stillThere.name = pm.areasOfInterest?.first ?? pm.name
+        stillThere.locality = pm.locality
+        stillThere.adminArea = pm.administrativeArea
+        stillThere.country = pm.country
+        try? context.save()
     }
 
     /// Fills in names for visits recorded while offline / rate-limited.
     ///
     /// Called by RootView every time the app comes to the foreground. A visit counts as
-    /// "missing" while `locality` (city) is nil. Handles at most 20 per call.
-    /// NOTE: places that genuinely have no city (sea, remote areas) will be retried on
-    /// every foreground; and opening the app twice quickly can start two loops at once.
+    /// "missing" while it has no `name`. (It used to check the city, so places that have
+    /// no city, like the sea, were looked up again on every launch.) At most 20 per call;
+    /// the queue ignores visits that are already waiting, so calling this often is harmless.
     func geocodeMissing() {
         guard let context = container?.mainContext else { return }
-        let missing = FetchDescriptor<Visit>(predicate: #Predicate { $0.locality == nil })
+        var missing = FetchDescriptor<Visit>(predicate: #Predicate { $0.name == nil })
+        missing.fetchLimit = 20
         let visits = (try? context.fetch(missing)) ?? []
-        // CLGeocoder handles one request at a time and is rate-limited, so space them out.
-        Task { @MainActor in
-            for v in visits.prefix(20) {
-                geocode(v)
-                try? await Task.sleep(for: .seconds(1.5))
-            }
-        }
+        enqueueGeocoding(visits.map(\.persistentModelID))
     }
 }
 

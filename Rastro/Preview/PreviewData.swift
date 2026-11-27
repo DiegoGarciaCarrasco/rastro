@@ -12,8 +12,10 @@
 //   • Last 7 days in Madrid: home every night → café → office (the office visit
 //     happening "now" is still open, shown as "Still here"), plus a park on some days.
 //   • One visit with no place name, to show what an un-geocoded visit looks like.
-//   • A weekend trip to Lisbon about 3 weeks ago, and a trip to Valencia ~7 months ago,
-//     so the Month / Year / All tabs show several cities and two countries.
+//   • A weekend trip to Lisbon ending ~9 days ago, and a trip to Valencia ~7 months ago,
+//     so the Year / All tabs show several cities and two countries. The Month tab
+//     includes Lisbon from about the 12th of the month onward (dates are relative to
+//     today, so early in a month the trip falls in the previous month).
 //   • Path breadcrumbs (LocationPoints) between consecutive visits, so the map draws a
 //     line and "km traveled" is not zero.
 //
@@ -150,8 +152,10 @@ enum PreviewData {
             }
         }
 
-        // ── Weekend in Lisbon, ~3 weeks ago ──
-        let lisbon = now.addingTimeInterval(-21 * day)
+        // ── Weekend in Lisbon, ending ~9 days ago (just before the Madrid week) ──
+        // Kept recent so the Month tab includes it on most days of the month
+        // (from about the 12th onward; earlier, it falls in the previous month).
+        let lisbon = now.addingTimeInterval(-9 * day)
         add(lisbonHotel, base: lisbon, from: -40, to: -28)
         add(belem, base: lisbon, from: -27, to: -24)
         add(timeOut, base: lisbon, from: -23, to: -21)
@@ -163,11 +167,13 @@ enum PreviewData {
         add(valenciaBeach, base: valencia, from: 4, to: 8)
 
         // ── Breadcrumbs: 4 points evenly spaced between each visit and the next ──
+        // Only for gaps under 12 hours (one journey). Between trips weeks apart we'd
+        // otherwise draw fake straight lines across the country and inflate km traveled.
         let ordered = visits.sorted { $0.arrival < $1.arrival }
         for (a, b) in zip(ordered, ordered.dropFirst()) {
             let leave = a.departure ?? a.arrival
             let gap = b.arrival.timeIntervalSince(leave)
-            guard gap > 0 else { continue }
+            guard gap > 0, gap < 12 * hour else { continue }
             for step in 1...4 {
                 let f = Double(step) / 5
                 context.insert(LocationPoint(

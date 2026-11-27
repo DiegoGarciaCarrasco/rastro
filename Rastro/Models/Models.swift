@@ -63,8 +63,10 @@ final class Visit {
     }
 
     /// How long you stayed. Ongoing visits count up to "now".
+    /// Never negative: VisitRecorder already refuses departure-before-arrival, and
+    /// `max(0, …)` is a safety net for any bad rows saved by older versions.
     var duration: TimeInterval {
-        (departure ?? .now).timeIntervalSince(arrival)
+        max(0, (departure ?? .now).timeIntervalSince(arrival))
     }
 
     /// Best human-readable label: place name → city → raw coordinates as a last resort.
